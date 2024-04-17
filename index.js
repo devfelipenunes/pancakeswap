@@ -3,7 +3,7 @@ const { default: axios } = require("axios");
 const { ethers } = require("ethers");
 
 const ABI_PANCAKESWAP = require("./abi.pancakeswap.json");
-const ABI_ERC20 = require("./abi.erc20.json")
+const ABI_ERC20 = require("./abi.erc20.json");
 
 const ROUTER_ADDRESS = process.env.ROUTER_ADDRESS;
 const WALLET = process.env.WALLET;
@@ -38,6 +38,57 @@ async function executeCycle() {
   const CAKE_MAINNET = "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82";
   const usdPrice = await getPrice(CAKE_MAINNET);
   console.log("USD " + usdPrice);
+
+  if (!isApproved) {
+    await approve(token1, AMOUNT_TO_BUY); //approving buy
+    isApproved = true;
+  }
+
+  if (usdPrice < PRICE_TO_BUY && !isOpened) {
+    isOpened = true;
+    amountOut = await swap(TOKEN1, TOKEN0, AMOUNT_TO_BUY);
+
+    await approve(token0, amountOut); //approving sell
+  } else if (isOpened && usdPrice > PRICE_TO_SELL) {
+    isOpened = false;
+    await swap(TOKEN0, TOKEN1, amountOut);
+
+    amountOut = 0;
+    isApproved = false;
+  }
+}
+
+async function swap(tokenIn, tokenOut, amountIn) {
+  console.log("Building params...");
+  const params = {
+    tokenIn,
+    tokenOut,
+    fee: 2500, //poolFee = 0.25% * 10000
+    recipient: WALLET,
+    deadline: Math.ceil(Date.now() / 1000) + 10,
+    amountIn,
+    amountOutMinimum: 0,
+    sqrtPriceLimitX96: 0,
+  };
+
+  const tx = await router.exactInputSingle(params, {
+    from: WALLET,
+    gasPrice: ethers.parseUnits("10", "gwei"),
+    gasLimit: 250000,
+  });
+  console.log("Swapping at " + tx.hash);
+  const receipt = await tx.wait();
+
+  const amountOut = ethers.toBigInt(receipt.logs[0].data);
+  console.log("Received " + ethers.formatUnits(amountOut, "ether"));
+
+  return amountOut;
+}
+
+async function approve(tokenContract, amount) {
+  const tx = await tokenContract.approve(ROUTER_ADDRESS, amount);
+  console.log("Approving at " + tx.hash);
+  await tx.wait();
 }
 
 async function start() {
